@@ -1,4 +1,3 @@
-# Defines the variable if it is not set at the command line.
 CROSS-COMPILE?=native
 
 ifeq ($(CROSS-COMPILE), native)
