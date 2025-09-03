@@ -13,7 +13,9 @@ int sb_init(StringBuilder *sb, size_t initial_cap, size_t max_cap) {
 	return 0;
 }
 
+/* Idempotent free */
 void sb_free(StringBuilder *sb) {
+	if (!sb->str) return;
 	free(sb->str);
 	sb->str = NULL;
 	sb->cap = 0;

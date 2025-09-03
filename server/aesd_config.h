@@ -1,10 +1,6 @@
 #ifndef __AESD_CONFIG_H__
 #define __AESD_CONFIG_H__
 
-#ifndef PORT
-#define PORT "9000"
-#endif
-
 #ifndef BACKLOG
 #define BACKLOG 20
 #endif
