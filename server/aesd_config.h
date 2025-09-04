@@ -10,7 +10,7 @@
 #endif
 
 #ifndef MAX_PACKET
-#define MAX_PACKET 8192
+#define MAX_PACKET (1<<20)
 #endif
 
 #ifndef RECV_BUF_SZ

@@ -7,7 +7,8 @@ CPPFLAGS ?=
 CPPFLAGS += -MMD -MP
 -include $(OBJS:.o=.d)
 
-CFLAGS ?= -Wall -Wextra -O2 -g
+CFLAGS ?= -Wall -Wextra -O0 -g 
+#-fno-omit-frame-pointer -fsanitize=address,undefined
 LDFLAGS ?=
 LDLIBS ?=
 
@@ -24,4 +25,4 @@ aesdsocket: $(OBJS)
 
 .PHONY: all clean
 clean:
-	$(RM) %.o aesdsocket
+	$(RM) *.o aesdsocket

@@ -38,20 +38,34 @@ short_write:
 }
 
 static int send_all(int fd, char *buf, size_t len) {
-	int rc;
+	ssize_t n;
 	size_t bytes_written;
+	size_t remaining;
 	if (fd == -1 || !buf)
 		return -1;
 
 	bytes_written = 0;
-	while ((rc = write(fd, buf, WRITE_CHUNK_SZ)) != 0) {
-		if (rc == -1) {
-			if (errno == EINTR) continue;
-			else return -1;
+	remaining = len - bytes_written;
+	size_t min;
+	while (remaining > 0) {
+		if (remaining < WRITE_CHUNK_SZ)
+			min = remaining;
+		else
+			min = WRITE_CHUNK_SZ;
+
+		n = write(fd, buf + bytes_written, min);
+		if (n > 0) {
+			bytes_written += n;
+			remaining -= n;
+		} else if (n == -1 && errno == EINTR) {
+			continue;
+		} else if (n == -1 && (errno == EPIPE
+				|| errno == ECONNRESET)) {
+			return 0;
+		} else if (n == -1) {
+			return EXIT_ERROR;
 		}
 
-		bytes_written += rc;
-		if (bytes_written == len) break;
 	}
 
 	return 0;
@@ -78,6 +92,35 @@ static int send_file_to_client(int send_fd, const char *path) {
 	}
 
 	close(fd);
+	return 0;
+}
+
+/* All pointers must be initialised and not NULL */
+static void discard_mode(bool *discard, char *newline, char *position, char *end, size_t *rem) {
+	if (!newline) {
+		/* 
+		 * Still no new line,
+		 * keep discarding
+		 */
+		position = end;
+		*rem = 0;
+	} else {
+		position = newline + 1;
+		*rem = end - position;
+		*discard = false;
+	}
+}
+
+static inline bool packet_fits(size_t sb_len, size_t seg_len, size_t max_packet) {
+	return (sb_len <= max_packet - seg_len);
+}
+
+static int assemble_packet(char *scratch, size_t scratch_cap, const char *prefix, size_t pre_len, const char *seg, size_t seg_len, size_t *out_len) {
+	if (pre_len > scratch_cap - seg_len) { errno = EOVERFLOW; return -1; }
+
+	memcpy(scratch, prefix, pre_len);
+	memcpy(scratch + pre_len, seg, seg_len);
+	*out_len = pre_len + seg_len;
 	return 0;
 }
 
@@ -121,20 +164,7 @@ int handle_connection(int fd, int write_fd, StringBuilder *sb,
 
 			/* Discard mode */
 			if (discard) {
-				if (!nl) {
-					/* 
-					 * Still no new line,
-					 * keep discarding
-					 */
-					pos = end;
-					remaining = 0;
-					continue;
-				} else {
-					pos = nl + 1;
-					remaining = end - pos;
-					discard = false;
-					continue;
-				}
+				discard_mode(&discard, nl, pos, end, &remaining);
 			}
 
 			/* Normal mode - newline found */
@@ -142,20 +172,29 @@ int handle_connection(int fd, int write_fd, StringBuilder *sb,
 				size_t seg_len = (nl - pos) + 1;
 
 				/* Avoid overflow */
-				if (sb->len > MAX_PACKET - seg_len) {
-					discard = false;
+				if (!packet_fits(sb->len, seg_len, MAX_PACKET)) {
 					sb->len = 0;
 					pos += seg_len;
 					remaining = (size_t)(end - pos);
 					continue;
 				}
 
-				size_t packet_len = sb->len + seg_len;
-				memcpy(scratch, sb->str, sb->len);
-				memcpy(scratch+sb->len, pos, seg_len);
-				rc = write_all(write_fd, scratch, 
-						packet_len);
-				if (rc == -1) {
+				size_t packet_len = 0;
+				if (assemble_packet(scratch, 
+						    MAX_PACKET, 
+						    sb->str, 
+						    sb->len,
+						    pos, 
+						    seg_len, 
+						    &packet_len) == -1) {
+					res->outcome = HC_OUTCOME_ERROR;
+					/* TODO: add op and error */
+					res->sys_errno = errno;
+					return EXIT_ERROR;
+				}
+
+				if (write_all(write_fd, scratch, packet_len) 
+							== -1) {
 					if (errno == EIO) {
 						res->outcome = HC_OUTCOME_ERROR;
 						res->op = HC_OP_APPEND;
@@ -173,10 +212,6 @@ int handle_connection(int fd, int write_fd, StringBuilder *sb,
 					} 
 				}
 
-				sb->len = 0;
-				pos += seg_len;
-				remaining = (size_t)(end - pos);
-
 				if (send_file_to_client(fd, 
 							AESD_DATA_PATH) == -1) {
 					res->outcome = HC_OUTCOME_ERROR;
@@ -185,6 +220,10 @@ int handle_connection(int fd, int write_fd, StringBuilder *sb,
 					res->sys_errno = errno;
 					return EXIT_ERROR;
 				}
+
+				sb->len = 0;
+				pos += seg_len;
+				remaining = (size_t)(end - pos);
 
 			/* Normal mode - newline not found */
 			} else {

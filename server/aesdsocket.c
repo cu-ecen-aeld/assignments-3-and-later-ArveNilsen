@@ -5,7 +5,7 @@ static void print_usage(void) {
 			"Port must be 4 digits!");
 }
 
-static int parse_args(bool *daemonize, char **port, int argc, char **argv) {
+static int parse_args(ServerContext *ctx, int argc, char **argv) {
 	if (argc > 4) {
 		print_usage();
 		return -1;
@@ -18,7 +18,7 @@ static int parse_args(bool *daemonize, char **port, int argc, char **argv) {
 	case 2:
 		/* Must be -d or invalid */
 		if (!memcmp(argv[1], "-d", 2)) {
-			*daemonize = true;
+			ctx->daemonize = true;
 			return 0;
 		} else {
 			print_usage();
@@ -28,7 +28,7 @@ static int parse_args(bool *daemonize, char **port, int argc, char **argv) {
 		/* Must be -p <PORT> */
 		if (!memcmp(argv[1], "-p", 2)) {
 			if ((strlen(argv[2]) == 4)) {
-				*port = argv[2];
+				ctx->port = argv[2];
 			}
 		}
 		break;
@@ -37,8 +37,8 @@ static int parse_args(bool *daemonize, char **port, int argc, char **argv) {
 		if ((!memcmp(argv[1], "-d", 2) &&
 		   (!memcmp(argv[2], "-p", 2)) &&
 		   ((strlen(argv[3]) == 4)))) {
-			*daemonize = true;
-			*port = argv[3];
+			ctx->daemonize = true;
+			ctx->port = argv[3];
 			return 0;
 		} else {
 			print_usage();
@@ -125,8 +125,8 @@ static int create_listen_socket(ServerContext *ctx) {
 
 	hints = (struct addrinfo){0};
 	hints.ai_family = AF_INET; /* IPv4 */
-	hints.ai_socktype = SOCK_STREAM | SOCK_CLOEXEC; /* TCP */
-	hints.ai_flags = AI_PASSIVE; /* Use current IP */
+	hints.ai_socktype = SOCK_STREAM; /* TCP */
+	hints.ai_flags = AI_PASSIVE | AI_NUMERICSERV; 
 
 	if ((rc = getaddrinfo(NULL, ctx->port, &hints, &servinfo)) != 0) {
 		return EXIT_ERROR;
@@ -137,7 +137,8 @@ static int create_listen_socket(ServerContext *ctx) {
 	 * Loop and bind to the first available.
 	 */
 	for (p = servinfo; p!= NULL; p = p->ai_next) {
-		if ((ctx->listen_fd = socket(p->ai_family, p->ai_socktype, 
+		if ((ctx->listen_fd = socket(p->ai_family, 
+					p->ai_socktype | SOCK_CLOEXEC,
 						p->ai_protocol)) == -1) {
 			continue;
 		}
@@ -145,7 +146,6 @@ static int create_listen_socket(ServerContext *ctx) {
 		if (setsockopt(ctx->listen_fd, SOL_SOCKET, SO_REUSEADDR, &yes,
 				sizeof(int)) == -1) {
 			freeaddrinfo(servinfo); 
-			close(ctx->listen_fd);
 			return EXIT_ERROR;
 		}
 
@@ -158,14 +158,12 @@ static int create_listen_socket(ServerContext *ctx) {
 
 	if (!p) {
 		freeaddrinfo(servinfo); 
-		close(ctx->listen_fd);
 		return EXIT_ERROR;
 	}
 
 	freeaddrinfo(servinfo); 
 
 	if (listen(ctx->listen_fd, BACKLOG) == -1) {
-		close(ctx->listen_fd);
 		return EXIT_ERROR;
 	}
 
@@ -226,13 +224,13 @@ static int open_append(ServerContext *ctx) {
 static int alloc_runtime_buffers(ServerContext *ctx) {
 
 	/* scratch buffer for recv loop */
-	char *scratch = malloc(MAX_PACKET);
-	if (!scratch) {
+	ctx->scratch = malloc(MAX_PACKET);
+	if (!ctx->scratch) {
 		return EXIT_ERROR;
 	}
 
 	if (sb_init(&ctx->sb, 4096, MAX_PACKET) == -1) {
-		free(scratch);
+		free(ctx->scratch);
 		return EXIT_ERROR;
 	}
 
@@ -298,7 +296,7 @@ static int run_accept_loop(ServerContext *ctx) {
 }
 
 void ctx_init(ServerContext *ctx) {
-	ctx->port = NULL;
+	ctx->port = "9000";
 	ctx->data_path = AESD_DATA_PATH;
 	ctx->daemonize = false;
 	ctx->listen_fd = -1;
@@ -314,7 +312,7 @@ int main(int argc, char** argv) {
 	ServerContext ctx;
 	ctx_init(&ctx);
 
-	if ((parse_args(&ctx.daemonize, &ctx.port, argc, argv)) == -1)
+	if ((parse_args(&ctx, argc, argv)) == -1)
 		goto cleanup;
 
 	if (create_listen_socket(&ctx) == -1)
