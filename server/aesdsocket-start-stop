@@ -1,0 +1,23 @@
+#!/bin/sh 
+ 
+case "$1" in 
+	start) 
+		echo "Starting aesdsocket" 
+		start-stop-daemon --start \
+			--make-pidfile --pidfile /run/aesdsocket.pid \
+			--exec /usr/bin/aesdsocket \
+			-- -d
+		;; 
+	stop) 
+		echo "Stopping aesdsocket" 
+		start-stop-daemon --stop \
+			--pidfile /run/aesdsocket.pid \
+			--signal TERM \
+			--retry=TERM/5/KILL/5
+		;; 
+	*) 
+		echo "Usage: $0 {start|stop}" 
+		exit 1 
+esac 
+ 
+exit 0
